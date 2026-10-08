@@ -80,6 +80,10 @@ test('security headers are set', async () => {
   assert.match(headers.get('content-security-policy'), /frame-ancestors 'none'/);
   assert.equal(headers.get('referrer-policy'), 'no-referrer');
   assert.equal(headers.get('x-frame-options'), 'DENY');
+  // HSTS only when served over HTTPS (via the proxy), never on plain HTTP
+  assert.equal(headers.get('strict-transport-security'), null);
+  const viaHttps = await api('/', { headers: { 'X-Forwarded-Proto': 'https' } });
+  assert.match(viaHttps.headers.get('strict-transport-security'), /max-age=/);
 });
 
 test('auth: valid, invalid, missing', async () => {

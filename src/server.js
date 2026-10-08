@@ -23,6 +23,8 @@ app.use((req, res, next) => {
     'Referrer-Policy': 'no-referrer',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
   });
+  // HSTS only on real HTTPS (Caddy sets X-Forwarded-Proto). Plain-HTTP setups without a domain are unaffected.
+  if (req.secure) res.set('Strict-Transport-Security', 'max-age=2592000');
   next();
 });
 // Uploads are raw bodies (parsed on their route). MCP requests may carry base64 attachments, so they get a larger limit.
