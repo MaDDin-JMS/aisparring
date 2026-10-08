@@ -29,14 +29,33 @@ remote() {
 }
 
 echo "→ Checking server $VPS_HOST…"
-remote 'command -v docker >/dev/null || (echo "Installing Docker…" && curl -fsSL https://get.docker.com | sh >/dev/null)'
+# Run through bash explicitly: the remote login shell may be zsh or something else.
+remote bash -s <<'EOS'
+set -e
+if ! command -v docker >/dev/null; then
+  echo "  Installing Docker…"
+  curl -fsSL https://get.docker.com | sh >/dev/null
+fi
+if ! docker compose version >/dev/null 2>&1; then
+  echo "  Installing Docker Compose…"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq docker-compose-plugin >/dev/null 2>&1 || apt-get install -y -qq docker-compose >/dev/null
+fi
+docker compose version
+if command -v ufw >/dev/null && ufw status | grep -q 'Status: active'; then
+  port_of() { (grep -E "^$1=" /opt/aichat/.env 2>/dev/null || true) | tail -1 | cut -d= -f2; }
+  http=$(port_of HTTP_PORT); https=$(port_of HTTPS_PORT)
+  for p in "${http:-80}" "${https:-443}"; do ufw allow "$p/tcp" >/dev/null && echo "  Firewall: port $p/tcp open"; done
+fi
+EOS
 
 echo "→ Uploading to $VPS_DIR…"
 tar czf - --exclude=node_modules --exclude=data --exclude=.git --exclude='deploy/*.env' --exclude=.env . \
   | remote "mkdir -p '$VPS_DIR' && tar xzf - -C '$VPS_DIR'"
 
 echo "→ Starting…"
-remote "cd '$VPS_DIR' && { [ -f .env ] || cp .env.example .env; } && docker compose up -d --build --remove-orphans && sleep 3 && docker compose ps"
+remote "cd '$VPS_DIR' && { [ -f .env ] || cp .env.example .env; } && docker compose --progress quiet up -d --build --remove-orphans && sleep 3 && docker compose ps"
 
 echo
 echo "→ Admin key (only present on the very first start):"
