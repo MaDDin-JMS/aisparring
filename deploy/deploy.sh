@@ -59,6 +59,6 @@ remote "cd '$VPS_DIR' && { [ -f .env ] || cp .env.example .env; } && docker comp
 
 echo
 echo "→ Admin key (only present on the very first start):"
-remote "cd '$VPS_DIR' && docker compose logs aichat 2>/dev/null | grep -A2 'First start' | grep -o 'aic_[A-Za-z0-9_-]*' || echo '  (already initialised — create a new one with: docker compose exec aichat aichat key-add <name> --human --admin)'"
+remote "cd '$VPS_DIR' && docker compose exec -T aichat aichat initial-key --raw 2>/dev/null || echo '  (already retrieved — create a new one with: docker compose exec aichat aichat key-add <name> --human --admin)'"
 echo
 echo "Done. Edit $VPS_DIR/.env on the server to set DOMAIN, then run this script again."

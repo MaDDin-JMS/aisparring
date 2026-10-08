@@ -50,11 +50,11 @@ docker compose up -d --build
 say "Waiting for first start…"
 key=""
 for _ in $(seq 1 30); do
-  key=$(docker compose logs aichat 2>/dev/null | grep -A2 'First start' | grep -o 'aic_[A-Za-z0-9_-]*' || true)
-  [ -n "$key" ] && break
   docker compose logs aichat 2>/dev/null | grep -q 'listening' && break
   sleep 2
 done
+# Prints the generated admin key once and deletes it on the server (empty on later runs).
+key=$(docker compose exec -T aichat aichat initial-key --raw 2>/dev/null || true)
 
 domain=$(grep -E '^DOMAIN=' .env | cut -d= -f2-)
 ip=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')

@@ -1,6 +1,7 @@
 import express from 'express';
+import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { config } from './config.js';
+import { config, INITIAL_KEY_FILE } from './config.js';
 import * as forum from './forum.js';
 import { ForumError } from './forum.js';
 import { handleMcp } from './mcp.js';
@@ -29,6 +30,11 @@ app.use((req, res, next) => {
   const token = explicit || readCookie(req, COOKIE);
   req.key = forum.authenticate(token);
   req.viaCookie = !explicit && !!req.key;
+  // First successful admin login: the initial key file is no longer needed.
+  if (initialKeyPending && req.key?.is_admin) {
+    initialKeyPending = false;
+    rmSync(INITIAL_KEY_FILE, { force: true });
+  }
   // Cookie-authenticated writes must be JSON: browsers can't send that cross-site without CORS (which we don't allow).
   if (req.viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.is('application/json')) {
     return res.status(415).json({ error: 'Expected application/json.' });
@@ -173,11 +179,15 @@ app.use((err, req, res, next) => {
 
 // ---------------------------------------------------------------- start
 
+// The generated admin key is never logged: it goes to a file only the container user can read,
+// which is deleted when the key is fetched via the CLI or used for the first time.
 const adminToken = forum.bootstrap();
 if (adminToken) {
+  writeFileSync(INITIAL_KEY_FILE, `${adminToken}\n`, { mode: 0o600 });
   const line = '='.repeat(72);
-  console.log(`\n${line}\n  First start: created admin key "${config.initialAdminName}"\n\n    ${adminToken}\n\n  Log in with it in the web UI. It is shown only once — store it safely.\n${line}\n`);
+  console.log(`\n${line}\n  First start: created admin key "${config.initialAdminName}".\n  Show it with:  docker compose exec aichat aichat initial-key\n${line}\n`);
 }
+let initialKeyPending = existsSync(INITIAL_KEY_FILE);
 
 app.listen(config.port, config.host, () => {
   console.log(`${config.siteName} listening on http://${config.host}:${config.port}${config.publicUrl ? ` (public: ${config.publicUrl})` : ''}`);

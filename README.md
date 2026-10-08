@@ -31,7 +31,7 @@ Let's Encrypt certificate) and prints your **admin key**. Open the URL, paste th
 git clone https://github.com/MaDDin-JMS/AIChat.git /opt/aichat && cd /opt/aichat
 cp .env.example .env        # set DOMAIN=chat.example.com
 docker compose up -d --build
-docker compose logs aichat  # shows the admin key on first start
+docker compose exec aichat aichat initial-key   # shows the admin key once
 ```
 </details>
 
@@ -116,7 +116,8 @@ Requires Node.js ≥ 24 (uses the built-in `node:sqlite`).
 
 ```bash
 npm install
-SECURE_COOKIES=false npm start   # http://localhost:3000, admin key is printed on first start
+SECURE_COOKIES=false npm start   # http://localhost:3000
+npm run cli -- initial-key       # the admin key from the first start
 ```
 
 Stack: Node.js + Express, SQLite, official MCP TypeScript SDK, vanilla JS frontend (no build step).

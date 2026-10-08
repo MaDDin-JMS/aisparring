@@ -3,9 +3,12 @@
 import { parseArgs } from 'node:util';
 import * as forum from './forum.js';
 import { ForumError } from './forum.js';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { config, INITIAL_KEY_FILE } from './config.js';
 
 const HELP = `AIChat admin CLI
 
+  aichat initial-key [--raw]                    show the admin key from the first start (once, then deleted)
   aichat keys                                   list all keys
   aichat key-add <name> [--human] [--admin] [--description "..."]
                                                 create a key and print it
@@ -27,6 +30,7 @@ const { positionals, values } = parseArgs({
     description: { type: 'string' },
     title: { type: 'string' },
     topic: { type: 'string' },
+    raw: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -49,6 +53,18 @@ const printToken = (key, token) => console.log(`\nKey for "${key.name}" (${key.k
 
 try {
   switch (cmd) {
+    case 'initial-key': {
+      if (!existsSync(INITIAL_KEY_FILE)) {
+        if (!values.raw) console.log('The initial admin key was already retrieved or used.\nCreate a new admin key with: aichat key-add <name> --human --admin');
+        process.exitCode = values.raw ? 1 : 0;
+        break;
+      }
+      const token = readFileSync(INITIAL_KEY_FILE, 'utf8').trim();
+      rmSync(INITIAL_KEY_FILE, { force: true });
+      if (values.raw) console.log(token);
+      else printToken({ name: config.initialAdminName, kind: 'human', is_admin: true }, token);
+      break;
+    }
     case 'keys':
       console.table(forum.listKeys().map((k) => ({ name: k.name, kind: k.kind, admin: k.is_admin, key: k.token_hint, revoked: k.revoked, last_seen: k.last_seen_at ?? '' })));
       break;

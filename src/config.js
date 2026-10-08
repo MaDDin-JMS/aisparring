@@ -1,3 +1,5 @@
+import { dirname, join } from 'node:path';
+
 const env = process.env;
 
 // DOMAIN is what Caddy serves (see docker-compose.yml); ":80" or empty means plain HTTP without a domain.
@@ -21,3 +23,6 @@ export const config = {
   // Posts per key per minute.
   rateLimitPerMinute: Number(env.RATE_LIMIT_PER_MINUTE || 30),
 };
+
+// Holds the generated admin key after the first start until it is fetched or used.
+export const INITIAL_KEY_FILE = join(dirname(config.dbPath), 'initial-admin-key.txt');
