@@ -4,14 +4,35 @@ import { fileURLToPath } from 'node:url';
 import { config, INITIAL_KEY_FILE } from './config.js';
 import * as forum from './forum.js';
 import { ForumError } from './forum.js';
+import * as attachments from './attachments.js';
 import { handleMcp } from './mcp.js';
 import { llmsTxt } from './docs.js';
 
-const COOKIE = 'aichat_key';
+const COOKIE = 'aichat_session';
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 'loopback, uniquelocal');
-app.use(express.json({ limit: '1mb' }));
+
+// Security headers for every response (attachments override the CSP with a stricter one).
+app.use((req, res, next) => {
+  res.set({
+    'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    'X-Frame-Options': 'DENY',
+    'X-Content-Type-Options': 'nosniff',
+    // ?key= login links must never leak to other sites through the Referer header.
+    'Referrer-Policy': 'no-referrer',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+  });
+  next();
+});
+// Uploads are raw bodies (parsed on their route). MCP requests may carry base64 attachments, so they get a larger limit.
+const UPLOAD_PATH = '/api/uploads';
+const jsonParser = express.json({ limit: '1mb' });
+const mcpJsonParser = express.json({ limit: `${Math.ceil(config.maxUploadMb * 1.4 * (config.maxImagesPerPost + config.maxFilesPerPost)) + 1}mb` });
+app.use((req, res, next) => {
+  if (req.path === UPLOAD_PATH) return next();
+  return (req.path === '/mcp' ? mcpJsonParser : jsonParser)(req, res, next);
+});
 
 // ---------------------------------------------------------------- auth
 
@@ -23,20 +44,49 @@ function readCookie(req, name) {
   return null;
 }
 
-/** Key from (in this order) Authorization: Bearer, X-API-Key, ?key=, or the login cookie. */
+// Brute-force brake: after too many invalid keys from one IP, refuse all credentials from it for a while.
+const MAX_AUTH_FAILURES = 20;
+const AUTH_BLOCK_MS = 15 * 60_000;
+const authFailures = new Map(); // ip -> { n, reset }
+
+function isBlocked(ip) {
+  const f = authFailures.get(ip);
+  return !!f && f.n >= MAX_AUTH_FAILURES && Date.now() < f.reset;
+}
+
+function recordFailure(ip) {
+  let f = authFailures.get(ip);
+  if (!f || Date.now() >= f.reset) f = { n: 0, reset: Date.now() + AUTH_BLOCK_MS };
+  f.n++;
+  authFailures.set(ip, f);
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, f] of authFailures) if (now >= f.reset) authFailures.delete(ip);
+}, 60_000).unref();
+
+const tooManyFailures = (res) => res.status(429).json({ error: 'Too many invalid keys from your address. Try again in 15 minutes.' });
+
+/** Key from (in this order) Authorization: Bearer, X-API-Key, ?key=, or the session cookie. */
 app.use((req, res, next) => {
   const bearer = req.headers.authorization?.match(/^Bearer\s+(.+)$/i)?.[1];
   const explicit = bearer || req.headers['x-api-key'] || (typeof req.query.key === 'string' ? req.query.key : null);
-  const token = explicit || readCookie(req, COOKIE);
-  req.key = forum.authenticate(token);
+  const session = explicit ? null : readCookie(req, COOKIE);
+  if (explicit && isBlocked(req.ip)) return tooManyFailures(res);
+  req.key = explicit ? forum.authenticate(explicit) : forum.authenticateSession(session);
+  // Only wrong keys count; an expired session cookie just means "log in again".
+  if (explicit && !req.key) recordFailure(req.ip);
   req.viaCookie = !explicit && !!req.key;
   // First successful admin login: the initial key file is no longer needed.
   if (initialKeyPending && req.key?.is_admin) {
     initialKeyPending = false;
     rmSync(INITIAL_KEY_FILE, { force: true });
   }
-  // Cookie-authenticated writes must be JSON: browsers can't send that cross-site without CORS (which we don't allow).
-  if (req.viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.is('application/json')) {
+  // Cookie-authenticated writes must be JSON (or, for uploads, carry the custom X-Filename header):
+  // browsers can't send either cross-site without a CORS preflight, which we never allow.
+  const csrfSafe = req.is('application/json') || (req.path === UPLOAD_PATH && req.get('x-filename'));
+  if (req.viaCookie && !['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !csrfSafe) {
     return res.status(415).json({ error: 'Expected application/json.' });
   }
   next();
@@ -48,20 +98,49 @@ const id = (req) => Number(req.params.id);
 
 // ---------------------------------------------------------------- session
 
+// The browser only ever stores a session token, never the key itself.
+function setSessionCookie(res, key) {
+  const token = forum.createSession(key);
+  res.setHeader('Set-Cookie', `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86400}${config.secureCookies ? '; Secure' : ''}`);
+}
+
 app.post('/api/session', (req, res) => {
-  const token = String(req.body?.key ?? '').trim();
-  const key = forum.authenticate(token);
-  if (!key) return res.status(401).json({ error: 'Unknown or revoked key.' });
-  res.setHeader('Set-Cookie', `${COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=31536000${config.secureCookies ? '; Secure' : ''}`);
+  if (isBlocked(req.ip)) return tooManyFailures(res);
+  const key = forum.authenticate(String(req.body?.key ?? '').trim());
+  if (!key) {
+    recordFailure(req.ip);
+    return res.status(401).json({ error: 'Unknown or revoked key.' });
+  }
+  setSessionCookie(res, key);
   res.json({ me: key });
 });
 
 app.delete('/api/session', (req, res) => {
+  forum.deleteSession(readCookie(req, COOKIE));
   res.setHeader('Set-Cookie', `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${config.secureCookies ? '; Secure' : ''}`);
   res.json({ ok: true });
 });
 
-app.get('/api/me', requireKey, (req, res) => res.json({ me: req.key, site: { name: config.siteName, url: publicUrl(req) } }));
+// Replace your own key, e.g. if it may have leaked. All other sessions of this key end.
+app.post('/api/me/rotate', requireKey, (req, res) => {
+  const { key, token } = forum.rotateKey(req.key.id);
+  if (req.viaCookie) setSessionCookie(res, key);
+  res.json({ key, token });
+});
+
+app.get('/api/me', requireKey, (req, res) => res.json({
+  me: req.key,
+  site: {
+    name: config.siteName,
+    url: publicUrl(req),
+    limits: {
+      max_images: config.maxImagesPerPost,
+      max_files: config.maxFilesPerPost,
+      max_upload_mb: config.maxUploadMb,
+      retention_days: config.attachmentRetentionDays,
+    },
+  },
+}));
 
 // ---------------------------------------------------------------- forum
 
@@ -83,6 +162,26 @@ app.get('/api/channels/:slug/participants', requireKey, (req, res) => {
 app.delete('/api/messages/:id', requireKey, (req, res) => {
   forum.deleteMessage(req.key, id(req));
   res.json({ ok: true });
+});
+
+// Upload one file as the raw request body (filename in X-Filename, URL-encoded).
+// Returns an id to pass in `attachments` when posting the message.
+app.post(UPLOAD_PATH, requireKey, express.raw({ type: () => true, limit: `${config.maxUploadMb}mb` }), (req, res) => {
+  const filename = decodeURIComponent(req.get('x-filename') || req.query.filename || 'file');
+  res.status(201).json({ attachment: attachments.saveUpload(req.key, { data: req.body, filename, mime: req.get('content-type') }) });
+});
+
+app.get('/api/attachments/:id', requireKey, (req, res) => {
+  const row = forum.getAttachment(req.key, req.params.id);
+  const inline = row.kind === 'image' && req.query.download === undefined;
+  res.set({
+    'Content-Type': inline ? row.mime : 'application/octet-stream',
+    'Content-Disposition': `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.filename)}`,
+    'X-Content-Type-Options': 'nosniff',
+    'Content-Security-Policy': "default-src 'none'; img-src 'self'; sandbox",
+    'Cache-Control': 'private, max-age=86400',
+  });
+  res.sendFile(attachments.attachmentPath(row));
 });
 
 app.get('/api/search', requireKey, (req, res) => {
@@ -173,6 +272,7 @@ app.get('/{*path}', (req, res) => res.sendFile(fileURLToPath(new URL('../public/
 app.use((err, req, res, next) => {
   if (err instanceof ForumError) return res.status(err.status).json({ error: err.message });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: 'Invalid JSON.' });
+  if (err.type === 'entity.too.large') return res.status(413).json({ error: `Request too large (files: max ${config.maxUploadMb} MB each).` });
   console.error(err);
   if (!res.headersSent) res.status(500).json({ error: 'Internal error.' });
 });
@@ -188,6 +288,16 @@ if (adminToken) {
   console.log(`\n${line}\n  First start: created admin key "${config.initialAdminName}".\n  Show it with:  docker compose exec aichat aichat initial-key\n${line}\n`);
 }
 let initialKeyPending = existsSync(INITIAL_KEY_FILE);
+
+// Remove expired attachments now and every 10 minutes.
+attachments.sweep();
+setInterval(() => {
+  try {
+    attachments.sweep();
+  } catch (err) {
+    console.error('Attachment cleanup failed:', err);
+  }
+}, 10 * 60_000).unref();
 
 app.listen(config.port, config.host, () => {
   console.log(`${config.siteName} listening on http://${config.host}:${config.port}${config.publicUrl ? ` (public: ${config.publicUrl})` : ''}`);

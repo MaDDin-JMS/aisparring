@@ -3,13 +3,11 @@ import { createHash, randomBytes } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { db, tx } from './db.js';
 import { config } from './config.js';
+import { ForumError } from './errors.js';
+import * as attachments from './attachments.js';
+import { assertNoSecrets } from './secrets.js';
 
-export class ForumError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
+export { ForumError };
 
 export const events = new EventEmitter();
 events.setMaxListeners(0);
@@ -48,18 +46,51 @@ function checkName(name) {
 
 const lastSeenWritten = new Map();
 
-/** Look up an active key by its secret token. Returns the public key object or null. */
-export function authenticate(token) {
-  if (!token || typeof token !== 'string') return null;
-  const row = db.prepare('SELECT * FROM keys WHERE token_hash = ? AND revoked_at IS NULL').get(hashToken(token.trim()));
-  if (!row) return null;
+function touch(row) {
   const now = Date.now();
   if (now - (lastSeenWritten.get(row.id) || 0) > 60_000) {
     lastSeenWritten.set(row.id, now);
     db.prepare("UPDATE keys SET last_seen_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?").run(row.id);
   }
+}
+
+/** Look up an active key by its secret token. Returns the public key object or null. */
+export function authenticate(token) {
+  if (!token || typeof token !== 'string' || !token.startsWith('aic_')) return null;
+  const row = db.prepare('SELECT * FROM keys WHERE token_hash = ? AND revoked_at IS NULL').get(hashToken(token.trim()));
+  if (!row) return null;
+  touch(row);
   return publicKey(row);
 }
+
+// ---------------------------------------------------------------- browser sessions
+
+const SESSION_DAYS = 30;
+
+/** Start a browser session for a key. Returns the session token for the cookie. */
+export function createSession(key) {
+  const token = `aics_${randomBytes(32).toString('base64url')}`;
+  const expires = new Date(Date.now() + SESSION_DAYS * 86_400_000).toISOString();
+  db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(new Date().toISOString());
+  db.prepare('INSERT INTO sessions (token_hash, key_id, expires_at) VALUES (?, ?, ?)').run(hashToken(token), key.id, expires);
+  return token;
+}
+
+export function authenticateSession(token) {
+  if (!token || typeof token !== 'string' || !token.startsWith('aics_')) return null;
+  const row = db.prepare(`
+    SELECT k.* FROM sessions s JOIN keys k ON k.id = s.key_id
+    WHERE s.token_hash = ? AND s.expires_at > ? AND k.revoked_at IS NULL`).get(hashToken(token), new Date().toISOString());
+  if (!row) return null;
+  touch(row);
+  return publicKey(row);
+}
+
+export function deleteSession(token) {
+  if (typeof token === 'string') db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(hashToken(token));
+}
+
+const endSessions = (keyId) => db.prepare('DELETE FROM sessions WHERE key_id = ?').run(keyId);
 
 /** Create a key. Returns { key, token } — the token is only ever shown here. */
 export function createKey({ name, kind = 'ai', is_admin = false, description = '', token } = {}) {
@@ -67,6 +98,9 @@ export function createKey({ name, kind = 'ai', is_admin = false, description = '
   if (!KINDS.includes(kind)) throw new ForumError(400, `kind must be one of: ${KINDS.join(', ')}`);
   if (db.prepare('SELECT 1 FROM keys WHERE name = ?').get(name)) {
     throw new ForumError(409, `The name "${name}" is already taken.`);
+  }
+  if (token && (!token.startsWith('aic_') || token.length < 36)) {
+    throw new ForumError(400, 'A predefined key must start with "aic_" and be at least 36 characters long (use: openssl rand -base64 32).');
   }
   token ||= newToken();
   const { lastInsertRowid } = db
@@ -110,6 +144,7 @@ export function updateKey(id, changes) {
   if ('revoked' in changes) {
     if (changes.revoked) assertAnotherAdmin(id);
     db.prepare(`UPDATE keys SET revoked_at = ${changes.revoked ? "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')" : 'NULL'} WHERE id = ?`).run(id);
+    if (changes.revoked) endSessions(id);
   }
   return getKey(id);
 }
@@ -119,6 +154,7 @@ export function rotateKey(id) {
   if (!getKey(id)) throw new ForumError(404, 'Key not found.');
   const token = newToken();
   db.prepare('UPDATE keys SET token_hash = ?, token_hint = ? WHERE id = ?').run(hashToken(token), tokenHint(token), id);
+  endSessions(id);
   return { key: getKey(id), token };
 }
 
@@ -180,6 +216,7 @@ export function updateChannel(id, changes) {
 export function deleteChannel(id) {
   if (!getChannel(id)) throw new ForumError(404, 'Channel not found.');
   db.prepare('DELETE FROM channels WHERE id = ?').run(id);
+  attachments.sweep();
 }
 
 /** Effective access of a key to a channel: 'write', 'read' or null. */
@@ -230,7 +267,7 @@ export function setChannelAccess(channelId, keyId, level) {
   }
 }
 
-function requireChannel(key, slug, need) {
+export function requireChannel(key, slug, need) {
   const channel = getChannel(slug);
   const level = accessLevel(key, channel);
   if (!channel || !level) throw new ForumError(404, `Channel #${String(slug).replace(/^#/, '')} not found or not accessible for you.`);
@@ -256,6 +293,12 @@ const toMessage = (r) => ({
   created_at: r.created_at,
 });
 
+/** Rows → messages, each with its attachments. */
+function toMessages(rows) {
+  const byMessage = attachments.attachmentsFor(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...toMessage(r), attachments: byMessage.get(r.id) ?? [] }));
+}
+
 /**
  * Messages of a channel, oldest first.
  * With `after`: the next `limit` messages after that id. Otherwise the latest `limit` (optionally before `before`).
@@ -270,13 +313,13 @@ export function listMessages(key, slug, { after, before, limit = 50 } = {}) {
     rows = db.prepare(`${MESSAGE_SQL} WHERE m.channel_id = ? AND m.id < ? ORDER BY m.id DESC LIMIT ?`)
       .all(channel.id, before != null ? Number(before) : Number.MAX_SAFE_INTEGER, limit).reverse();
   }
-  return { channel, messages: rows.map(toMessage) };
+  return { channel, messages: toMessages(rows) };
 }
 
 export function getMessage(key, id) {
   const row = db.prepare(`${MESSAGE_SQL} WHERE m.id = ?`).get(Number(id));
   if (!row || !accessLevel(key, getChannel(row.channel))) throw new ForumError(404, `Message ${id} not found.`);
-  return toMessage(row);
+  return toMessages([row])[0];
 }
 
 const postTimes = new Map();
@@ -292,10 +335,12 @@ function checkRateLimit(key) {
   postTimes.set(key.id, recent);
 }
 
-export function postMessage(key, slug, { content, reply_to } = {}) {
+export function postMessage(key, slug, { content, reply_to, attachments: attachmentIds } = {}) {
   const channel = requireChannel(key, slug, 'write');
   content = String(content ?? '').replace(/\r\n/g, '\n').trim();
-  if (!content) throw new ForumError(400, 'Message is empty.');
+  if (attachmentIds != null && !Array.isArray(attachmentIds)) throw new ForumError(400, 'attachments must be a list of upload ids.');
+  if (!content && !attachmentIds?.length) throw new ForumError(400, 'Message is empty.');
+  assertNoSecrets(content);
   if (content.length > config.maxMessageLength) {
     throw new ForumError(400, `Message too long (${content.length} > ${config.maxMessageLength} characters).`);
   }
@@ -304,10 +349,14 @@ export function postMessage(key, slug, { content, reply_to } = {}) {
     if (!parent || parent.channel_id !== channel.id) throw new ForumError(400, `reply_to: message ${reply_to} is not in #${channel.slug}.`);
   }
   checkRateLimit(key);
-  const { lastInsertRowid } = db
-    .prepare('INSERT INTO messages (channel_id, key_id, content, reply_to) VALUES (?, ?, ?, ?)')
-    .run(channel.id, key.id, content, reply_to ?? null);
-  const message = toMessage(db.prepare(`${MESSAGE_SQL} WHERE m.id = ?`).get(Number(lastInsertRowid)));
+  const id = tx(() => {
+    const { lastInsertRowid } = db
+      .prepare('INSERT INTO messages (channel_id, key_id, content, reply_to) VALUES (?, ?, ?, ?)')
+      .run(channel.id, key.id, content, reply_to ?? null);
+    attachments.attachToMessage(key, Number(lastInsertRowid), attachmentIds);
+    return Number(lastInsertRowid);
+  });
+  const message = toMessages([db.prepare(`${MESSAGE_SQL} WHERE m.id = ?`).get(id)])[0];
   events.emit('message', { channel, message });
   return message;
 }
@@ -317,7 +366,22 @@ export function deleteMessage(key, id) {
   if (!row) throw new ForumError(404, `Message ${id} not found.`);
   if (row.key_id !== key.id && !key.is_admin) throw new ForumError(403, 'You can only delete your own messages.');
   db.prepare('DELETE FROM messages WHERE id = ?').run(row.id);
+  attachments.sweep();
   events.emit('delete', { channel: getChannel(row.channel_id), id: row.id });
+}
+
+/** An attachment the key may read: its own pending upload, or one in a readable channel. */
+export function getAttachment(key, id) {
+  const row = attachments.getAttachmentRow(id);
+  let allowed = false;
+  if (row?.message_id == null) allowed = row?.key_id === key.id;
+  else {
+    const msg = db.prepare('SELECT channel_id FROM messages WHERE id = ?').get(row.message_id);
+    allowed = !!msg && !!accessLevel(key, getChannel(msg.channel_id));
+  }
+  if (!row || !allowed) throw new ForumError(404, `Attachment ${id} not found.`);
+  if (row.purged) throw new ForumError(410, `Attachment ${id} has expired (files are kept ${config.attachmentRetentionDays} days).`);
+  return row;
 }
 
 export function searchMessages(key, query, { channel: slug, limit = 30 } = {}) {
@@ -326,9 +390,8 @@ export function searchMessages(key, query, { channel: slug, limit = 30 } = {}) {
   const channelIds = slug ? [requireChannel(key, slug, 'read').id] : listChannelsFor(key).map((c) => c.id);
   if (!channelIds.length) return [];
   const like = `%${query.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-  return db.prepare(`${MESSAGE_SQL} WHERE m.channel_id IN (${channelIds.map(() => '?').join(',')}) AND m.content LIKE ? ESCAPE '\\' ORDER BY m.id DESC LIMIT ?`)
-    .all(...channelIds, like, Math.min(Number(limit) || 30, 100))
-    .map(toMessage);
+  return toMessages(db.prepare(`${MESSAGE_SQL} WHERE m.channel_id IN (${channelIds.map(() => '?').join(',')}) AND m.content LIKE ? ESCAPE '\\' ORDER BY m.id DESC LIMIT ?`)
+    .all(...channelIds, like, Math.min(Number(limit) || 30, 100)));
 }
 
 /**
@@ -340,9 +403,8 @@ export function waitForMessages(key, { channel: slug, after = 0, timeoutSeconds 
   const fetchNew = () => {
     const ids = channelFilter ? [channelFilter] : listChannelsFor(key).map((c) => c.id);
     if (!ids.length) return [];
-    return db.prepare(`${MESSAGE_SQL} WHERE m.channel_id IN (${ids.map(() => '?').join(',')}) AND m.id > ? AND m.key_id != ? ORDER BY m.id LIMIT 100`)
-      .all(...ids, Number(after) || 0, key.id)
-      .map(toMessage);
+    return toMessages(db.prepare(`${MESSAGE_SQL} WHERE m.channel_id IN (${ids.map(() => '?').join(',')}) AND m.id > ? AND m.key_id != ? ORDER BY m.id LIMIT 100`)
+      .all(...ids, Number(after) || 0, key.id));
   };
   const existing = fetchNew();
   if (existing.length) return Promise.resolve(existing);

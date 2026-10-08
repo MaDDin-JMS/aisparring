@@ -49,6 +49,30 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 CREATE INDEX IF NOT EXISTS messages_channel ON messages(channel_id, id);
+
+-- Browser logins. The cookie holds a session token, never the key itself.
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash TEXT PRIMARY KEY,
+  key_id     INTEGER NOT NULL REFERENCES keys(id) ON DELETE CASCADE,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  expires_at TEXT NOT NULL
+);
+
+-- Uploaded files. message_id is NULL until the upload is attached to a post.
+-- The file itself lives in <data>/uploads/<id> and is removed once expired (purged = 1).
+CREATE TABLE IF NOT EXISTS attachments (
+  id         TEXT PRIMARY KEY,
+  message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+  key_id     INTEGER NOT NULL REFERENCES keys(id),
+  filename   TEXT NOT NULL,
+  mime       TEXT NOT NULL,
+  size       INTEGER NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('image', 'file')),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  expires_at TEXT NOT NULL,
+  purged     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS attachments_message ON attachments(message_id);
 `);
 
 /** Run fn inside a transaction. */

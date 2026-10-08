@@ -52,6 +52,27 @@
     return h;
   }
 
+  function fmtSize(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function attachmentsHtml(list = []) {
+    if (!list.length) return '';
+    const live = list.filter((a) => !a.expired);
+    const images = live.filter((a) => a.kind === 'image');
+    const files = live.filter((a) => a.kind !== 'image');
+    const expired = list.filter((a) => a.expired);
+    const until = (a) => `Available until ${new Date(a.expires_at).toLocaleString()}`;
+    return `
+      ${images.length ? `<div class="att-images${images.length === 1 ? ' single' : ''}">${images.map((a) => `
+        <a href="${esc(a.url)}" target="_blank" rel="noopener" title="${esc(a.filename)} · ${until(a)}"><img src="${esc(a.url)}" alt="${esc(a.filename)}" loading="lazy"></a>`).join('')}</div>` : ''}
+      ${files.length || expired.length ? `<div class="att-files">${files.map((a) => `
+        <a class="att-file" href="${esc(a.url)}?download" title="${until(a)}"><span>📄</span><span class="att-name">${esc(a.filename)}</span><span class="muted small">${fmtSize(a.size)}</span></a>`).join('')}${expired.map((a) => `
+        <span class="att-file expired" title="Attachments are deleted after ${limits().retention_days} days"><span>⌛</span><span class="att-name">${esc(a.filename)}</span><span class="small">expired</span></span>`).join('')}</div>` : ''}`;
+  }
+
   function fmtTime(iso) {
     const d = new Date(iso);
     const today = new Date().toDateString() === d.toDateString();
@@ -247,7 +268,8 @@
             <time datetime="${m.created_at}" title="${new Date(m.created_at).toLocaleString()}">${fmtTime(m.created_at)}</time>
             <span class="msg-id">#${m.id}</span>
           </header>
-          <div class="content">${window.renderMarkdown(m.content)}</div>
+          ${m.content ? `<div class="content">${window.renderMarkdown(m.content)}</div>` : ''}
+          ${attachmentsHtml(m.attachments)}
         </div>
         <div class="msg-actions">
           ${$('.composer-row').hidden ? '' : '<button class="icon-btn" data-reply title="Reply">↩</button>'}
@@ -256,6 +278,16 @@
         </div>
       </article>`;
   }
+
+  // Keep the view pinned to the newest message while images finish loading.
+  let stickToBottom = true;
+  $('#messages').addEventListener('scroll', () => {
+    const box = $('#messages');
+    stickToBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
+  });
+  $('#messages').addEventListener('load', () => {
+    if (stickToBottom) $('#messages').scrollTop = $('#messages').scrollHeight;
+  }, true);
 
   function renderMessages(scrollToEnd) {
     const box = $('#messages');
@@ -325,6 +357,7 @@
     const input = $('#input');
     input.style.height = 'auto';
     input.style.height = `${Math.min(input.scrollHeight, 260)}px`;
+    input.style.overflowY = input.scrollHeight > 260 ? 'auto' : 'hidden';
   };
   $('#input').addEventListener('input', autosize);
   $('#input').addEventListener('keydown', (e) => {
@@ -336,21 +369,109 @@
     }
   });
 
+  // Files chosen for the next message. Each is uploaded on send; the upload id is kept so a failed send can be retried.
+  let pending = [];
+  let sending = false;
+  const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+  const limits = () => state.site?.limits ?? { max_images: 10, max_files: 5, max_upload_mb: 10, retention_days: 3 };
+
+  function addFiles(files) {
+    const l = limits();
+    for (const file of files) {
+      const kind = IMAGE_TYPES.includes(file.type) ? 'image' : 'file';
+      const count = pending.filter((p) => p.kind === kind).length;
+      if (kind === 'image' && count >= l.max_images) { toast(`Max ${l.max_images} images per post.`, true); continue; }
+      if (kind === 'file' && count >= l.max_files) { toast(`Max ${l.max_files} files per post.`, true); continue; }
+      if (file.size > l.max_upload_mb * 1024 * 1024) { toast(`${file.name} is larger than ${l.max_upload_mb} MB.`, true); continue; }
+      pending.push({ file, kind, preview: kind === 'image' ? URL.createObjectURL(file) : null, id: null });
+    }
+    renderPending();
+  }
+
+  function renderPending() {
+    const box = $('#pending');
+    box.hidden = !pending.length;
+    box.innerHTML = pending.map((p, i) => `
+      <div class="chip${p.kind === 'image' ? ' img' : ''}" title="${esc(p.file.name)}">
+        ${p.preview ? `<img src="${p.preview}" alt="">` : `<span class="chip-icon">📄</span><span class="chip-name">${esc(p.file.name)}</span>`}
+        <button type="button" class="chip-x" data-remove="${i}" title="Remove">✕</button>
+      </div>`).join('') + `<span class="muted small pending-note">Deleted after ${limits().retention_days} days</span>`;
+  }
+
+  function clearPending() {
+    pending.forEach((p) => p.preview && URL.revokeObjectURL(p.preview));
+    pending = [];
+    renderPending();
+  }
+
+  $('#pending').addEventListener('click', (e) => {
+    const i = e.target.closest('[data-remove]')?.dataset.remove;
+    if (i === undefined) return;
+    const [p] = pending.splice(Number(i), 1);
+    if (p.preview) URL.revokeObjectURL(p.preview);
+    renderPending();
+  });
+
+  $('#attach-btn').addEventListener('click', () => $('#file-input').click());
+  $('#file-input').addEventListener('change', (e) => {
+    addFiles(e.target.files);
+    e.target.value = '';
+  });
+  $('#input').addEventListener('paste', (e) => {
+    if (e.clipboardData?.files?.length) {
+      e.preventDefault();
+      addFiles(e.clipboardData.files);
+    }
+  });
+  const chatView = $('#chat-view');
+  chatView.addEventListener('dragover', (e) => {
+    if (!$('.composer-row').hidden && e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault();
+      chatView.classList.add('dropping');
+    }
+  });
+  chatView.addEventListener('dragleave', (e) => { if (!chatView.contains(e.relatedTarget)) chatView.classList.remove('dropping'); });
+  chatView.addEventListener('drop', (e) => {
+    chatView.classList.remove('dropping');
+    if (!e.dataTransfer?.files?.length || $('.composer-row').hidden) return;
+    e.preventDefault();
+    addFiles(e.dataTransfer.files);
+  });
+
+  async function upload(file) {
+    const res = await fetch('/api/uploads', {
+      method: 'POST',
+      headers: { 'Content-Type': file.type || 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
+      body: file,
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(`${file.name}: ${data.error || res.statusText}`);
+    return data.attachment.id;
+  }
+
   $('#composer').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = $('#input');
     const content = input.value.trim();
-    if (!content) return;
+    if ((!content && !pending.length) || sending) return;
+    sending = true;
+    $('#composer').classList.add('busy');
     try {
+      for (const p of pending) p.id ??= await upload(p.file);
       await api(`/api/channels/${encodeURIComponent(state.current)}/messages`, {
         method: 'POST',
-        body: { content, reply_to: state.replyTo?.id },
+        body: { content, reply_to: state.replyTo?.id, attachments: pending.map((p) => p.id) },
       });
       input.value = '';
       autosize();
       setReply(null);
+      clearPending();
     } catch (err) {
       toast(err.message, true);
+    } finally {
+      sending = false;
+      $('#composer').classList.remove('busy');
     }
   });
 
@@ -411,7 +532,23 @@
       <p class="muted small">Plain HTTP API and instructions for agents: <a href="/llms.txt" target="_blank">${esc(baseUrl())}/llms.txt</a></p>`;
   }
 
+  $('#rotate-me').addEventListener('click', async () => {
+    if (!confirm('Create a new key for yourself?\n\nYour current key stops working immediately — update it everywhere you use it (MCP config, other browsers).')) return;
+    try {
+      const { key, token } = await api('/api/me/rotate', { method: 'POST', body: {} });
+      $('#connect-title').textContent = 'Your new key';
+      $('#connect-body').innerHTML = `
+        <p><b>Your new key — copy it now, it is shown only once.</b></p>
+        <pre class="copyable big"><code>${esc(token)}</code></pre>
+        ${key.kind === 'ai' ? connectSnippets(token) : `<h4>Login link</h4><pre class="copyable"><code>${esc(baseUrl())}/?key=${esc(token)}</code></pre>`}`;
+      $('#connect-dialog').showModal();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  });
+
   $('#open-connect').addEventListener('click', () => {
+    $('#connect-title').textContent = 'Connect an AI';
     $('#connect-body').innerHTML = connectSnippets();
     $('#connect-dialog').showModal();
   });

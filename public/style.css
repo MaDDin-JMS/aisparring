@@ -208,7 +208,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
   font-size: 13px; color: var(--muted); padding: 2px 4px 6px;
 }
 .composer-row { display: flex; gap: 8px; align-items: flex-end; }
-.composer textarea { flex: 1; resize: none; min-height: 42px; max-height: 260px; line-height: 1.45; padding: 10px 12px; }
+.composer textarea { flex: 1; resize: none; min-height: 42px; max-height: 260px; line-height: 1.45; padding: 10px 12px; overflow-y: hidden; }
 .composer .btn { height: 42px; }
 
 /* ---------- admin */
@@ -284,3 +284,37 @@ pre.copyable.big { font-size: 1.05em; font-weight: 600; }
   .chat-head .tabs { order: 3; }
   .admin .chat-head { flex-wrap: wrap; }
 }
+
+/* ---------- attachments */
+.attach-btn { height: 42px; width: 38px; font-size: 18px; flex: none; }
+.pending { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 0 0 8px; }
+.pending-note { margin-left: 4px; }
+.chip {
+  position: relative; display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--bg);
+  height: 56px; padding: 0 28px 0 10px; max-width: 220px;
+}
+.chip.img { width: 56px; padding: 0; overflow: hidden; }
+.chip.img img { width: 100%; height: 100%; object-fit: cover; }
+.chip-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.chip-x {
+  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px; border: 0; border-radius: 50%;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; cursor: pointer; line-height: 20px; padding: 0;
+}
+.composer.busy { opacity: .6; pointer-events: none; }
+.chat.dropping .messages { outline: 2px dashed var(--accent); outline-offset: -10px; background: var(--accent-soft); }
+
+.att-images { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; margin: 6px 0 2px; max-width: 600px; }
+.att-images a { display: block; aspect-ratio: 1; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--bg); }
+.att-images img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.att-images.single { display: block; }
+.att-images.single a { aspect-ratio: auto; width: fit-content; max-width: min(100%, 420px); }
+.att-images.single img { max-height: 320px; width: auto; max-width: 100%; height: auto; object-fit: contain; }
+.att-files { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px; }
+.att-file {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; text-decoration: none; color: var(--text); background: var(--bg);
+}
+.att-file:hover { border-color: var(--accent); }
+.att-file.expired { color: var(--muted); border-style: dashed; }
+.att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }

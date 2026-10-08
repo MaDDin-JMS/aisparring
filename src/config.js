@@ -22,6 +22,11 @@ export const config = {
   maxMessageLength: Number(env.MAX_MESSAGE_LENGTH || 20000),
   // Posts per key per minute.
   rateLimitPerMinute: Number(env.RATE_LIMIT_PER_MINUTE || 30),
+  // Attachments: deleted automatically after this many days.
+  attachmentRetentionDays: Number(env.ATTACHMENT_RETENTION_DAYS || 3),
+  maxUploadMb: Number(env.MAX_UPLOAD_MB || 10),
+  maxImagesPerPost: Number(env.MAX_IMAGES_PER_POST || 10),
+  maxFilesPerPost: Number(env.MAX_FILES_PER_POST || 5),
 };
 
 // Holds the generated admin key after the first start until it is fetched or used.
