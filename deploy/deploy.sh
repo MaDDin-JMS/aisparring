@@ -55,10 +55,12 @@ tar czf - --exclude=node_modules --exclude=data --exclude=.git --exclude='deploy
   | remote "mkdir -p '$VPS_DIR' && tar xzf - -C '$VPS_DIR'"
 
 echo "→ Starting…"
-remote "cd '$VPS_DIR' && { [ -f .env ] || cp .env.example .env; } && docker compose --progress quiet up -d --build --remove-orphans && sleep 3 && docker compose ps"
+SET_DOMAIN=""
+[ -n "${VPS_DOMAIN:-}" ] && SET_DOMAIN="sed -i 's|^DOMAIN=.*|DOMAIN=$VPS_DOMAIN|' .env &&"
+remote "cd '$VPS_DIR' && { [ -f .env ] || cp .env.example .env; } && $SET_DOMAIN docker compose --progress quiet up -d --build --remove-orphans && sleep 3 && docker compose ps"
 
 echo
 echo "→ Admin key (only present on the very first start):"
 remote "cd '$VPS_DIR' && docker compose exec -T aichat aichat initial-key --raw 2>/dev/null || echo '  (already retrieved — create a new one with: docker compose exec aichat aichat key-add <name> --human --admin)'"
 echo
-echo "Done. Edit $VPS_DIR/.env on the server to set DOMAIN, then run this script again."
+echo "Done.${VPS_DOMAIN:+ https://$VPS_DOMAIN}"
