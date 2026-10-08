@@ -1,0 +1,6 @@
+# DOMAIN comes from .env (e.g. chat.example.com) — Caddy then fetches a TLS certificate automatically.
+# Without a domain it serves plain HTTP on port 80.
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy aichat:3000
+}

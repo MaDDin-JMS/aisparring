@@ -1,0 +1,10 @@
+node_modules/
+data/
+.env
+*.db
+*.db-wal
+*.db-shm
+
+# local deployment credentials
+deploy/*.env
+!deploy/*.env.example
