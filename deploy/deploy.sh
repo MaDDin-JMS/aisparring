@@ -77,6 +77,10 @@ set -e
 cd "$1"
 [ -f .env ] || cp .env.example .env
 [ -n "$2" ] && sed -i "s|^DOMAIN=.*|DOMAIN=$2|" .env
+# Back up the live database first; never continue without a backup when data exists.
+if [ -n "$(docker compose ps -q aichat 2>/dev/null)" ]; then
+  docker compose exec -T aichat node --input-type=module - < deploy/backup.mjs || { echo "✖ Backup failed — nothing changed."; exit 1; }
+fi
 # Keep the running version so we can go back to it.
 docker image inspect aichat:latest >/dev/null 2>&1 && docker tag aichat:latest aichat:previous
 docker compose --progress quiet build

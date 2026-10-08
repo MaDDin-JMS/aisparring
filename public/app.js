@@ -239,6 +239,7 @@
     const slug = state.current;
     const { participants } = await api(`/api/channels/${encodeURIComponent(slug)}/participants`);
     if (slug !== state.current) return;
+    state.participants = participants;
     const ais = participants.filter((p) => p.kind === 'ai').length;
     $('#participants-btn').textContent = `${participants.length - ais} 👤 · ${ais} ◆`;
     $('#participants').innerHTML = participants.map((p) => `
@@ -367,6 +368,82 @@
     } else if (e.key === 'Escape') {
       setReply(null);
     }
+  });
+
+  // @mention picker: typing "@" shows the channel's participants; arrows/Enter/Tab pick one.
+  const mention = { open: false, start: 0, items: [], index: 0 };
+  const menu = $('#mention-menu');
+
+  function mentionQuery() {
+    const input = $('#input');
+    const before = input.value.slice(0, input.selectionStart);
+    const m = before.match(/(?:^|[\s(])@([\p{L}\p{N}._-]{0,40})$/u);
+    return m ? { query: m[1], start: input.selectionStart - m[1].length - 1 } : null;
+  }
+
+  function closeMention() {
+    mention.open = false;
+    menu.hidden = true;
+  }
+
+  function updateMention() {
+    const q = mentionQuery();
+    if (!q) return closeMention();
+    const needle = q.query.toLowerCase();
+    const all = (state.participants || []).filter((p) => p.name !== state.me.name);
+    const starts = all.filter((p) => p.name.toLowerCase().startsWith(needle));
+    const contains = all.filter((p) => !starts.includes(p) && p.name.toLowerCase().includes(needle));
+    mention.items = [...starts, ...contains].slice(0, 8);
+    if (!mention.items.length) return closeMention();
+    mention.start = q.start;
+    mention.index = Math.min(mention.index, mention.items.length - 1);
+    mention.open = true;
+    menu.hidden = false;
+    menu.innerHTML = mention.items.map((p, i) => `
+      <div class="mention-item${i === mention.index ? ' active' : ''}" role="option" data-i="${i}">
+        <span class="avatar sm${p.kind === 'ai' ? ' ai' : ''}" style="--h:${hue(p.name)}">${p.kind === 'ai' ? '◆' : esc(initials(p.name))}</span>
+        <b>${esc(p.name)}</b><span class="muted small">${p.kind === 'ai' ? 'AI' : 'Human'}${p.description ? ` · ${esc(p.description)}` : ''}</span>
+      </div>`).join('');
+  }
+
+  function pickMention(i) {
+    const p = mention.items[i];
+    if (!p) return;
+    const input = $('#input');
+    input.setRangeText(`@${p.name} `, mention.start, input.selectionStart, 'end');
+    closeMention();
+    input.focus();
+    autosize();
+  }
+
+  $('#input').addEventListener('input', () => {
+    mention.index = 0;
+    updateMention();
+  });
+  $('#input').addEventListener('click', updateMention);
+  $('#input').addEventListener('blur', () => setTimeout(closeMention, 150));
+  // Capture phase: runs before the Enter-to-send handler.
+  $('#input').addEventListener('keydown', (e) => {
+    if (!mention.open) return;
+    const n = mention.items.length;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      mention.index = (mention.index + (e.key === 'ArrowDown' ? 1 : n - 1)) % n;
+      updateMention();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      pickMention(mention.index);
+    } else if (e.key === 'Escape') {
+      closeMention();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+  }, true);
+  menu.addEventListener('mousedown', (e) => {
+    const item = e.target.closest('[data-i]');
+    if (!item) return;
+    e.preventDefault();
+    pickMention(Number(item.dataset.i));
   });
 
   // Files chosen for the next message. Each is uploaded on send; the upload id is kept so a failed send can be retried.

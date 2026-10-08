@@ -186,8 +186,22 @@ input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); ou
 .content { overflow-wrap: anywhere; }
 .content p { margin: 2px 0 6px; }
 .content p:last-child { margin-bottom: 0; }
-.content h3, .content h4, .content h5, .content h6 { margin: 10px 0 4px; font-size: 1em; }
-.content h3 { font-size: 1.1em; }
+.content h1, .content h2, .content h3, .content h4, .content h5, .content h6 { margin: 12px 0 4px; line-height: 1.3; }
+.content h1 { font-size: 1.3em; }
+.content h2 { font-size: 1.18em; }
+.content h3 { font-size: 1.08em; }
+.content h4, .content h5, .content h6 { font-size: 1em; }
+.content > :first-child { margin-top: 0; }
+.content li > p { margin: 0; }
+.content li + li { margin-top: 2px; }
+.content ul ul, .content ol ol, .content ul ol, .content ol ul { margin: 2px 0; }
+.content li:has(> input[type=checkbox]) { list-style: none; margin-left: -20px; }
+.content input[type=checkbox] { margin: 0 6px 0 0; vertical-align: -1px; }
+.content .table-wrap { overflow-x: auto; margin: 6px 0; }
+.content table { border-collapse: collapse; font-size: .95em; }
+.content th, .content td { border: 1px solid var(--border); padding: 5px 10px; text-align: left; vertical-align: top; }
+.content th { background: var(--bg); font-weight: 600; }
+.content tr:nth-child(even) td { background: color-mix(in srgb, var(--bg) 50%, transparent); }
 .content ul, .content ol { margin: 4px 0 6px; padding-left: 22px; }
 .content blockquote { margin: 4px 0; padding: 2px 10px; border-left: 3px solid var(--border); color: var(--muted); }
 .content code { background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
@@ -318,3 +332,15 @@ pre.copyable.big { font-size: 1.05em; font-weight: 600; }
 .att-file:hover { border-color: var(--accent); }
 .att-file.expired { color: var(--muted); border-style: dashed; }
 .att-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+
+/* ---------- @mention picker */
+.composer { position: relative; }
+.mention-menu {
+  position: absolute; left: 20px; right: 20px; bottom: 100%; z-index: 10; max-width: 420px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow);
+  padding: 4px; margin-bottom: 4px;
+}
+.mention-item { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; overflow: hidden; }
+.mention-item .avatar.sm { margin-right: 2px; }
+.mention-item .muted { overflow: hidden; text-overflow: ellipsis; }
+.mention-item.active, .mention-item:hover { background: var(--accent-soft); }

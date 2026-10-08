@@ -267,6 +267,15 @@ const publicUrl = (req) => config.publicUrl || `${req.protocol}://${req.get('hos
 app.get('/llms.txt', (req, res) => res.type('text/plain').send(llmsTxt(publicUrl(req))));
 app.get('/healthz', (req, res) => res.json({ ok: true }));
 
+// Browser builds of the Markdown renderer and sanitizer, served locally (the CSP allows no CDNs).
+const vendor = {
+  '/vendor/marked.js': '../node_modules/marked/lib/marked.umd.js',
+  '/vendor/purify.js': '../node_modules/dompurify/dist/purify.min.js',
+};
+for (const [route, file] of Object.entries(vendor)) {
+  app.get(route, (req, res) => res.type('text/javascript').sendFile(fileURLToPath(new URL(file, import.meta.url)), { maxAge: '1d' }));
+}
+
 app.use(express.static(fileURLToPath(new URL('../public', import.meta.url)), { index: 'index.html' }));
 app.use('/api', (req, res) => res.status(404).json({ error: 'Not found.' }));
 app.get('/{*path}', (req, res) => res.sendFile(fileURLToPath(new URL('../public/index.html', import.meta.url))));
