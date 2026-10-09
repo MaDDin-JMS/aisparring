@@ -357,14 +357,17 @@ export function postMessage(key, slug, { content, reply_to, attachments: attachm
     return Number(lastInsertRowid);
   });
   const message = toMessages([db.prepare(`${MESSAGE_SQL} WHERE m.id = ?`).get(id)])[0];
-  events.emit('message', { channel, message });
+  events.emit('message', { channel, message, authorId: key.id });
   return message;
 }
 
 export function deleteMessage(key, id) {
   const row = db.prepare('SELECT m.id, m.key_id, m.channel_id FROM messages m WHERE m.id = ?').get(Number(id));
-  if (!row) throw new ForumError(404, `Message ${id} not found.`);
+  const level = row && accessLevel(key, getChannel(row.channel_id));
+  if (!row || !level) throw new ForumError(404, `Message ${id} not found.`);
   if (row.key_id !== key.id && !key.is_admin) throw new ForumError(403, 'You can only delete your own messages.');
+  // Authors need write access (not archived); admins can always clean up.
+  if (!key.is_admin && level !== 'write') throw new ForumError(403, 'This channel is read-only for you — messages can no longer be deleted here.');
   db.prepare('DELETE FROM messages WHERE id = ?').run(row.id);
   attachments.sweep();
   events.emit('delete', { channel: getChannel(row.channel_id), id: row.id });
@@ -400,8 +403,13 @@ export function searchMessages(key, query, { channel: slug, limit = 30 } = {}) {
  */
 export function waitForMessages(key, { channel: slug, after = 0, timeoutSeconds = 30, signal } = {}) {
   const channelFilter = slug ? requireChannel(key, slug, 'read').id : null;
+  // Permissions are checked again on delivery: access or the key may be revoked while waiting.
   const fetchNew = () => {
-    const ids = channelFilter ? [channelFilter] : listChannelsFor(key).map((c) => c.id);
+    const current = getKey(key.id);
+    if (!current || current.revoked) return [];
+    const ids = channelFilter
+      ? (accessLevel(current, getChannel(channelFilter)) ? [channelFilter] : [])
+      : listChannelsFor(current).map((c) => c.id);
     if (!ids.length) return [];
     return toMessages(db.prepare(`${MESSAGE_SQL} WHERE m.channel_id IN (${ids.map(() => '?').join(',')}) AND m.id > ? AND m.key_id != ? ORDER BY m.id LIMIT 100`)
       .all(...ids, Number(after) || 0, key.id));
@@ -409,6 +417,7 @@ export function waitForMessages(key, { channel: slug, after = 0, timeoutSeconds 
   const existing = fetchNew();
   if (existing.length) return Promise.resolve(existing);
 
+  const release = openConnection(key);
   const timeoutMs = Math.min(Math.max(Number(timeoutSeconds) || 30, 1), 120) * 1000;
   return new Promise((resolve) => {
     let done = false;
@@ -418,17 +427,40 @@ export function waitForMessages(key, { channel: slug, after = 0, timeoutSeconds 
       clearTimeout(timer);
       events.off('message', onMessage);
       signal?.removeEventListener('abort', finish);
+      release();
       resolve(fetchNew());
     };
-    const onMessage = ({ channel, message }) => {
-      if (message.author === key.name) return;
+    const onMessage = ({ channel, authorId }) => {
+      if (authorId === key.id) return;
       // Short delay so a burst of messages arrives as one batch.
       if (channelFilter ? channel.id === channelFilter : accessLevel(key, channel)) setTimeout(finish, 1500);
     };
     const timer = setTimeout(finish, timeoutMs);
     events.on('message', onMessage);
     signal?.addEventListener('abort', finish);
+    if (signal?.aborted) finish();
   });
+}
+
+// ---------------------------------------------------------------- open connections
+
+const openConnections = new Map(); // key id -> count
+
+/** Reserve one long-poll / stream slot for a key. Returns a release function (safe to call twice). */
+export function openConnection(key) {
+  const n = openConnections.get(key.id) || 0;
+  if (n >= config.maxConnectionsPerKey) {
+    throw new ForumError(429, `Too many open connections for this key (max ${config.maxConnectionsPerKey}). Close other waits or browser tabs first.`);
+  }
+  openConnections.set(key.id, n + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (openConnections.get(key.id) || 1) - 1;
+    if (left > 0) openConnections.set(key.id, left);
+    else openConnections.delete(key.id);
+  };
 }
 
 // ---------------------------------------------------------------- bootstrap

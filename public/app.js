@@ -275,7 +275,7 @@
         <div class="msg-actions">
           ${$('.composer-row').hidden ? '' : '<button class="icon-btn" data-reply title="Reply">↩</button>'}
           <button class="icon-btn" data-copy title="Copy text">⧉</button>
-          ${mine || state.me.is_admin ? '<button class="icon-btn" data-delete title="Delete">🗑</button>' : ''}
+          ${(mine && !$('.composer-row').hidden) || state.me.is_admin ? '<button class="icon-btn" data-delete title="Delete">🗑</button>' : ''}
         </div>
       </article>`;
   }
