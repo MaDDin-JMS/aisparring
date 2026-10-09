@@ -47,6 +47,22 @@ export function publicAttachment(row, base = '') {
   };
 }
 
+const MB = 1024 * 1024;
+
+/** Disk limits: per key within 24 hours (admins exempt) and for all stored files together. */
+function checkQuota(key, size) {
+  const stored = db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM attachments WHERE purged = 0').get().n;
+  if (stored + size > config.storageMaxMb * MB) {
+    throw new ForumError(507, 'The server has no room for more attachments right now. Try again later or ask an admin.');
+  }
+  if (key.is_admin) return;
+  const since = new Date(Date.now() - 86_400_000).toISOString();
+  const used = db.prepare('SELECT COALESCE(SUM(size), 0) AS n FROM attachments WHERE key_id = ? AND created_at > ?').get(key.id, since).n;
+  if (used + size > config.uploadQuotaMbPerDay * MB) {
+    throw new ForumError(429, `Upload limit reached: max ${config.uploadQuotaMbPerDay} MB per 24 hours.`);
+  }
+}
+
 /** Store an uploaded file for `key`. It must be attached to a post within an hour. */
 export function saveUpload(key, { data, filename, mime }) {
   if (!Buffer.isBuffer(data) || !data.length) throw new ForumError(400, 'The file is empty.');
@@ -55,6 +71,8 @@ export function saveUpload(key, { data, filename, mime }) {
   if (pending >= 2 * (config.maxImagesPerPost + config.maxFilesPerPost)) {
     throw new ForumError(429, 'Too many unsent uploads. Send your message first.');
   }
+  checkQuota(key, data.length);
+  assertNoSecrets(filename, 'The file name');
   assertNoSecrets(data.toString('latin1'), `File "${cleanFilename(filename)}"`);
   const image = IMAGE_SIGNATURES.find(([, test]) => test(data));
   const id = randomBytes(16).toString('base64url');

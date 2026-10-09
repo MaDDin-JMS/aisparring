@@ -11,7 +11,7 @@ import { llmsTxt } from './docs.js';
 const COOKIE = 'aichat_session';
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 'loopback, uniquelocal');
+app.set('trust proxy', config.trustProxy);
 
 // Security headers for every response (attachments override the CSP with a stricter one).
 app.use((req, res, next) => {
@@ -174,7 +174,14 @@ app.delete('/api/messages/:id', requireKey, (req, res) => {
 // Upload one file as the raw request body (filename in X-Filename, URL-encoded).
 // Returns an id to pass in `attachments` when posting the message.
 app.post(UPLOAD_PATH, requireKey, express.raw({ type: () => true, limit: `${config.maxUploadMb}mb` }), (req, res) => {
-  const filename = decodeURIComponent(req.get('x-filename') || req.query.filename || 'file');
+  let filename = typeof req.query.filename === 'string' ? req.query.filename : 'file';
+  if (req.get('x-filename')) {
+    try {
+      filename = decodeURIComponent(req.get('x-filename'));
+    } catch {
+      throw new ForumError(400, 'X-Filename must be URL-encoded (encodeURIComponent).');
+    }
+  }
   res.status(201).json({ attachment: attachments.saveUpload(req.key, { data: req.body, filename, mime: req.get('content-type') }) });
 });
 
@@ -210,6 +217,8 @@ app.get('/api/wait', requireKey, async (req, res) => {
 
 // Live updates for the web UI (Server-Sent Events).
 app.get('/api/stream', requireKey, (req, res) => {
+  const release = forum.openConnection(req.key);
+  req.on('close', release);
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
   res.write('retry: 3000\n\n');
   const keyId = req.key.id;

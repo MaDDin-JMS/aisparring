@@ -18,6 +18,19 @@ ENV_FILE=${ENV_FILE:-deploy/vps.env}
 . "./$ENV_FILE"
 : "${VPS_HOST:?}" "${VPS_USER:=root}" "${VPS_DIR:=/opt/aichat}" "${VPS_PASSWORD:=}" "${VPS_SSH_KEY:=}" "${VPS_DOMAIN:=}"
 
+# The upload step empties VPS_DIR on the server, so it must be a dedicated folder like /opt/aichat.
+# (The server side additionally refuses a non-empty folder that is not an AIChat installation.)
+VPS_DIR=${VPS_DIR%/}
+case "$VPS_DIR" in
+  *..*|*' '*|*"'"*|*'"'*) bad_dir=1 ;;
+  /?*/?*) bad_dir= ;;
+  *) bad_dir=1 ;;
+esac
+if [ -n "$bad_dir" ]; then
+  echo "VPS_DIR must be an absolute path to a dedicated folder, e.g. /opt/aichat (got: '$VPS_DIR')." >&2
+  exit 1
+fi
+
 if [ -z "${AICHAT_TESTED:-}" ] && [ -z "${SKIP_TESTS:-}" ]; then
   echo "→ Running tests…"
   log=$(MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W 2>/dev/null || pwd):/src:ro" node:24-slim sh -c \
@@ -69,7 +82,8 @@ EOS
 echo "→ Uploading…"
 # Replace the code but keep the server's .env (data lives in Docker volumes, not here).
 tar czf - --exclude=node_modules --exclude=data --exclude=.git --exclude='deploy/*.env' --exclude=.env . \
-  | remote "mkdir -p '$VPS_DIR' && find '$VPS_DIR' -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} + && tar xzf - -C '$VPS_DIR' 2>/dev/null"
+  | remote "if [ -n \"\$(ls -A '$VPS_DIR' 2>/dev/null)\" ] && [ ! -f '$VPS_DIR/docker-compose.yml' ]; then echo '✖ $VPS_DIR is not empty and is not an AIChat folder — refusing to replace its contents.' >&2; exit 1; fi \
+      && mkdir -p '$VPS_DIR' && find '$VPS_DIR' -mindepth 1 -maxdepth 1 ! -name .env -exec rm -rf {} + && tar xzf - -C '$VPS_DIR' 2>/dev/null"
 
 echo "→ Building and starting…"
 remote bash -s -- "$VPS_DIR" "$VPS_DOMAIN" <<'EOS'

@@ -139,6 +139,17 @@ test('posting a key is refused (message and attachment)', async () => {
   assert.equal(up.status, 400);
   const viaMcp = await callTool(C, 'post_message', { channel: 'general', content: 'here', attachments: [{ filename: 'k.txt', text: A }] });
   assert.ok(viaMcp.isError);
+  // invisible characters don't hide a key, and neither does putting it in the file name
+  const hidden = await api('/api/channels/general/messages', { key: C, method: 'POST', body: { content: C.replace('aic_', 'aic​_') } });
+  assert.equal(hidden.status, 400);
+  const inName = await api('/api/uploads', { key: C, method: 'POST', raw: 'hello', headers: { 'Content-Type': 'text/plain', 'X-Filename': `${G}.txt` } });
+  assert.equal(inName.status, 400);
+});
+
+test('uploads: malformed X-Filename is a clean 400', async () => {
+  const r = await api('/api/uploads', { key: C, method: 'POST', raw: 'x', headers: { 'X-Filename': '%E0%A4%A' } });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /URL-encoded/);
 });
 
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(32, 1)]);
@@ -209,6 +220,84 @@ test('MCP: large bodies only after authentication', async () => {
   const authed = await api('/mcp', { key: C, method: 'POST', body: call, headers });
   assert.equal(authed.status, 200);
   assert.match(authed.json.result.content[0].text, /with 1 attachment/);
+});
+
+const keyId = async (key) => (await api('/api/me', { key })).json.me.id;
+const lastId = async (key) => (await api('/api/channels/general/messages?limit=1', { key })).json.messages.at(-1)?.id ?? 0;
+
+test('waiting requests re-check access: removed channel permission, revoked key', async () => {
+  const W = (await api('/api/admin/keys', { key: A, method: 'POST', body: { name: 'Waiter', kind: 'ai' } })).json.token;
+  const ch = (await api('/api/admin/channels', { key: A, method: 'POST', body: { slug: 'vault', is_open: false } })).json.channel;
+  await api(`/api/admin/channels/${ch.id}/access/${await keyId(W)}`, { key: A, method: 'PUT', body: { level: 'read' } });
+
+  // channel permission removed while waiting → the new message is not delivered
+  const waiting = api('/api/wait?after=0&channel=vault&timeout=5', { key: W });
+  await new Promise((r) => setTimeout(r, 300));
+  await api(`/api/admin/channels/${ch.id}/access/${await keyId(W)}`, { key: A, method: 'PUT', body: { level: null } });
+  await api('/api/channels/vault/messages', { key: A, method: 'POST', body: { content: 'after removal' } });
+  assert.deepEqual((await waiting).json.messages, []);
+
+  // key revoked while waiting (MCP) → nothing delivered either
+  const after = await lastId(A);
+  const viaMcp = callTool(W, 'wait_for_messages', { after_id: after, timeout_seconds: 5 });
+  await new Promise((r) => setTimeout(r, 300));
+  await api(`/api/admin/keys/${await keyId(W)}`, { key: A, method: 'PATCH', body: { revoked: true } });
+  await api('/api/channels/general/messages', { key: A, method: 'POST', body: { content: 'after revoke' } });
+  assert.match((await viaMcp).content[0].text, /No new messages/);
+});
+
+test('deleting: only with write access, admins always', async () => {
+  const ch = (await api('/api/admin/channels', { key: A, method: 'POST', body: { slug: 'old', is_open: false } })).json.channel;
+  const cId = await keyId(C);
+  await api(`/api/admin/channels/${ch.id}/access/${cId}`, { key: A, method: 'PUT', body: { level: 'write' } });
+  const m1 = (await api('/api/channels/old/messages', { key: C, method: 'POST', body: { content: 'one' } })).json.message;
+  const m2 = (await api('/api/channels/old/messages', { key: C, method: 'POST', body: { content: 'two' } })).json.message;
+  await api(`/api/admin/channels/${ch.id}`, { key: A, method: 'PATCH', body: { archived: true } });
+  assert.equal((await api(`/api/messages/${m1.id}`, { key: C, method: 'DELETE' })).status, 403, 'archived: read-only');
+  await api(`/api/admin/channels/${ch.id}/access/${cId}`, { key: A, method: 'PUT', body: { level: null } });
+  assert.equal((await api(`/api/messages/${m1.id}`, { key: C, method: 'DELETE' })).status, 404, 'no access any more');
+  assert.equal((await api(`/api/messages/${m2.id}`, { key: A, method: 'DELETE' })).status, 200, 'admins can still clean up');
+});
+
+test('open connections per key are limited', async () => {
+  const L = (await api('/api/admin/keys', { key: A, method: 'POST', body: { name: 'Looper', kind: 'ai' } })).json.token;
+  const controllers = [];
+  const open = (path) => {
+    const ac = new AbortController();
+    controllers.push(ac);
+    return fetch(`${srv.base}${path}`, { headers: { Authorization: `Bearer ${L}` }, signal: ac.signal }).catch(() => null);
+  };
+  const streams = await open('/api/stream'); // counts too
+  assert.equal(streams.status, 200);
+  for (let i = 0; i < 9; i++) open('/api/wait?after=999999999&timeout=30');
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal((await api('/api/wait?after=999999999&timeout=1', { key: L })).status, 429);
+  const viaMcp = await callTool(L, 'wait_for_messages', { after_id: 999999999, timeout_seconds: 1 });
+  assert.ok(viaMcp.isError);
+  assert.match(viaMcp.content[0].text, /Too many open connections/);
+  controllers.forEach((ac) => ac.abort());
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await api('/api/wait?after=999999999&timeout=1', { key: L })).status, 200, 'slots are released');
+});
+
+test('upload quota per key, total storage limit, TRUST_PROXY=false', async () => {
+  const s = await startServer({ MAX_UPLOAD_MB: '1', UPLOAD_QUOTA_MB_PER_DAY: '2', STORAGE_MAX_MB: '3', TRUST_PROXY: 'false' });
+  try {
+    const call = (key, path, opts = {}) => fetch(`${s.base}${path}`, { ...opts, headers: { Authorization: `Bearer ${key}`, ...opts.headers } });
+    const user = (await (await call(s.admin, '/api/admin/keys', { method: 'POST', body: JSON.stringify({ name: 'U', kind: 'ai' }), headers: { 'Content-Type': 'application/json' } })).json()).token;
+    const mb = Buffer.alloc(900 * 1024, 0x41);
+    const up = (key, n) => call(key, '/api/uploads', { method: 'POST', body: mb, headers: { 'X-Filename': `f${n}.bin` } });
+    assert.equal((await up(user, 1)).status, 201);
+    assert.equal((await up(user, 2)).status, 201);
+    assert.equal((await up(user, 3)).status, 429, 'per-key quota of 2 MB per day');
+    assert.equal((await up(s.admin, 4)).status, 201, 'admins are exempt from the per-key quota');
+    assert.equal((await up(s.admin, 5)).status, 507, 'total storage of 3 MB is full');
+    // without a trusted proxy, X-Forwarded-For can't be used to dodge the brute-force brake
+    for (let i = 0; i < 20; i++) await call(`aic_guess${i}`, '/api/me', { headers: { 'X-Forwarded-For': `198.51.100.${i}` } });
+    assert.equal((await call(user, '/api/me', { headers: { 'X-Forwarded-For': '198.51.100.99' } })).status, 429);
+  } finally {
+    s.stop();
+  }
 });
 
 test('brute force: an IP is blocked after 20 wrong keys', async () => {
