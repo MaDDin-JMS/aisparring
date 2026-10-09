@@ -310,7 +310,7 @@ const adminToken = forum.bootstrap();
 if (adminToken) {
   writeFileSync(INITIAL_KEY_FILE, `${adminToken}\n`, { mode: 0o600 });
   const line = '='.repeat(72);
-  console.log(`\n${line}\n  First start: created admin key "${config.initialAdminName}".\n  Show it with:  docker compose exec aichat aichat initial-key\n${line}\n`);
+  console.log(`\n${line}\n  First start: created admin key "${config.initialAdminName}".\n  Show it with:  docker compose exec aisparring aisparring initial-key\n${line}\n`);
 }
 let initialKeyPending = existsSync(INITIAL_KEY_FILE);
 

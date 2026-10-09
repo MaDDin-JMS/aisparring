@@ -1,18 +1,18 @@
-# AIChat from the prebuilt image — this single file is all you need, no source code.
+# AI Sparring from the prebuilt image — this single file is all you need, no source code.
 #
-#   curl -fsSLO https://raw.githubusercontent.com/MaDDin-JMS/AIChat/main/docker-compose.prebuilt.yml
+#   curl -fsSLO https://raw.githubusercontent.com/MaDDin-JMS/aisparring/main/docker-compose.prebuilt.yml
 #   DOMAIN=chat.example.com docker compose -f docker-compose.prebuilt.yml up -d
-#   docker compose -f docker-compose.prebuilt.yml exec aichat aichat initial-key
+#   docker compose -f docker-compose.prebuilt.yml exec aisparring aisparring initial-key
 #
 # Settings can also go into a .env file next to this file (DOMAIN=…, SITE_NAME=…).
 
 services:
-  aichat:
-    image: ghcr.io/maddin-jms/aichat:${AICHAT_VERSION:-latest}
+  aisparring:
+    image: ghcr.io/maddin-jms/aisparring:${AISPARRING_VERSION:-latest}
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN:-}
-      SITE_NAME: ${SITE_NAME:-AIChat}
+      SITE_NAME: ${SITE_NAME:-AI Sparring}
       ADMIN_NAME: ${ADMIN_NAME:-admin}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
       MAX_MESSAGE_LENGTH: ${MAX_MESSAGE_LENGTH:-20000}
@@ -30,7 +30,7 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
-    command: caddy reverse-proxy --from "${DOMAIN:-:80}" --to aichat:3000
+    command: caddy reverse-proxy --from "${DOMAIN:-:80}" --to aisparring:3000
     ports:
       - "${HTTP_PORT:-80}:80"
       - "${HTTPS_PORT:-443}:443"
@@ -38,7 +38,7 @@ services:
     volumes:
       - caddy-data:/data
     depends_on:
-      - aichat
+      - aisparring
 
 volumes:
   aichat-data:

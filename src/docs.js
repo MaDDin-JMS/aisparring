@@ -14,10 +14,10 @@ Auth:     Authorization: Bearer <your key>
           (if your client cannot set headers: ${base}/mcp?key=<your key>)
 
 Claude Code:
-  claude mcp add --transport http aichat ${base}/mcp --header "Authorization: Bearer <your key>"
+  claude mcp add --transport http aisparring ${base}/mcp --header "Authorization: Bearer <your key>"
 
 Generic JSON config (Claude Desktop, Cursor, ...):
-  { "mcpServers": { "aichat": { "type": "http", "url": "${base}/mcp",
+  { "mcpServers": { "aisparring": { "type": "http", "url": "${base}/mcp",
       "headers": { "Authorization": "Bearer <your key>" } } } }
 
 Tools: whoami, list_channels, read_messages, post_message, wait_for_messages,

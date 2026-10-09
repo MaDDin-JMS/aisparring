@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
-# AIChat one-line installer for a fresh Linux VPS (Debian/Ubuntu/RHEL-family):
+# AI Sparring one-line installer for a fresh Linux VPS (Debian/Ubuntu/RHEL-family):
 #
-#   curl -fsSL https://raw.githubusercontent.com/MaDDin-JMS/AIChat/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/MaDDin-JMS/aisparring/main/install.sh | sudo bash
 #
-# Installs Docker if needed, puts AIChat into /opt/aichat, asks for your domain and starts it.
+# Installs Docker if needed, puts AI Sparring into /opt/aisparring, asks for your domain and starts it.
 set -euo pipefail
 
-REPO="${AICHAT_REPO:-https://github.com/MaDDin-JMS/AIChat.git}"
-DIR="${AICHAT_DIR:-/opt/aichat}"
+REPO="${AISPARRING_REPO:-https://github.com/MaDDin-JMS/aisparring.git}"
+# Installations from before the rename live in /opt/aichat; keep updating them there.
+if [ -z "${AISPARRING_DIR:-}" ] && [ -d /opt/aichat/.git ] && [ ! -e /opt/aisparring ]; then AISPARRING_DIR=/opt/aichat; fi
+DIR="${AISPARRING_DIR:-/opt/aisparring}"
 
 say() { printf '\033[1;35m▸\033[0m %s\n' "$*"; }
 [ "$(id -u)" -eq 0 ] || { echo "Please run as root (sudo)." >&2; exit 1; }
@@ -27,34 +29,34 @@ if [ -d "$DIR/.git" ]; then
   say "Updating $DIR…"
   git -C "$DIR" pull --ff-only
 else
-  say "Downloading AIChat to $DIR…"
+  say "Downloading AI Sparring to $DIR…"
   git clone --depth 1 "$REPO" "$DIR"
 fi
 cd "$DIR"
 
 if [ ! -f .env ]; then
   cp .env.example .env
-  domain="${AICHAT_DOMAIN:-}"
+  domain="${AISPARRING_DOMAIN:-}"
   if [ -z "$domain" ] && [ -r /dev/tty ]; then
     echo
-    echo "Which domain should AIChat use? Its DNS record must point to this server's IP."
+    echo "Which domain should AI Sparring use? Its DNS record must point to this server's IP."
     echo "Leave empty to use plain HTTP on the server IP for now."
     read -r -p "Domain: " domain < /dev/tty || true
   fi
   sed -i "s|^DOMAIN=.*|DOMAIN=${domain}|" .env
 fi
 
-say "Starting AIChat…"
+say "Starting AI Sparring…"
 docker compose up -d --build
 
 say "Waiting for first start…"
 key=""
 for _ in $(seq 1 30); do
-  docker compose logs aichat 2>/dev/null | grep -q 'listening' && break
+  docker compose logs aisparring 2>/dev/null | grep -q 'listening' && break
   sleep 2
 done
 # Prints the generated admin key once and deletes it on the server (empty on later runs).
-key=$(docker compose exec -T aichat aichat initial-key --raw 2>/dev/null || true)
+key=$(docker compose exec -T aisparring aisparring initial-key --raw 2>/dev/null || true)
 
 domain=$(grep -E '^DOMAIN=' .env | cut -d= -f2-)
 ip=$(curl -fsS4 --max-time 5 https://ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
@@ -62,7 +64,7 @@ url=$([ -n "$domain" ] && echo "https://$domain" || echo "http://$ip")
 
 echo
 echo "────────────────────────────────────────────────────────────"
-echo "  AIChat is running at: $url"
+echo "  AI Sparring is running at: $url"
 if [ -n "$key" ]; then
   echo
   echo "  Your admin key (shown only once — save it!):"
@@ -72,7 +74,7 @@ if [ -n "$key" ]; then
   echo "  Log in directly: $url/?key=$key"
 fi
 echo
-echo "  Admin CLI:  cd $DIR && docker compose exec aichat aichat --help"
+echo "  Admin CLI:  cd $DIR && docker compose exec aisparring aisparring --help"
 echo "  Update:     cd $DIR && git pull && docker compose up -d --build"
 echo "  Firewall:   make sure ports 80 and 443 are open."
 echo "────────────────────────────────────────────────────────────"

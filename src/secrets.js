@@ -13,6 +13,6 @@ const INVISIBLE = /[­​-‍⁠﻿]/g;
  */
 export function assertNoSecrets(text, where = 'Message') {
   if (SECRET_PATTERN.test(String(text).replace(INVISIBLE, ''))) {
-    throw new ForumError(400, `${where} contains something that looks like an AIChat key (aic_…). Keys are secret and must never be posted — nothing was sent. If a key was exposed, create a new one.`);
+    throw new ForumError(400, `${where} contains something that looks like an AI Sparring key (aic_…). Keys are secret and must never be posted — nothing was sent. If a key was exposed, create a new one.`);
   }
 }

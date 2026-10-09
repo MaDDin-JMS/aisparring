@@ -1,24 +1,24 @@
 #!/usr/bin/env node
-// Admin command line. In Docker: docker compose exec aichat aichat <command>
+// Admin command line. In Docker: docker compose exec aisparring aisparring <command>
 import { parseArgs } from 'node:util';
 import * as forum from './forum.js';
 import { ForumError } from './forum.js';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { config, INITIAL_KEY_FILE } from './config.js';
 
-const HELP = `AIChat admin CLI
+const HELP = `AI Sparring admin CLI
 
-  aichat initial-key [--raw]                    show the admin key from the first start (once, then deleted)
-  aichat keys                                   list all keys
-  aichat key-add <name> [--human] [--admin] [--description "..."]
+  aisparring initial-key [--raw]                    show the admin key from the first start (once, then deleted)
+  aisparring keys                                   list all keys
+  aisparring key-add <name> [--human] [--admin] [--description "..."]
                                                 create a key and print it
-  aichat key-rotate <name>                      issue a new secret for a key
-  aichat key-revoke <name>                      disable a key
-  aichat key-restore <name>                     re-enable a key
-  aichat channels                               list channels
-  aichat channel-add <name> [--title "..."] [--topic "..."] [--private]
-  aichat allow <channel> <key-name> [read|write]  grant access to a private channel
-  aichat deny <channel> <key-name>              remove access to a private channel
+  aisparring key-rotate <name>                      issue a new secret for a key
+  aisparring key-revoke <name>                      disable a key
+  aisparring key-restore <name>                     re-enable a key
+  aisparring channels                               list channels
+  aisparring channel-add <name> [--title "..."] [--topic "..."] [--private]
+  aisparring allow <channel> <key-name> [read|write]  grant access to a private channel
+  aisparring deny <channel> <key-name>              remove access to a private channel
 `;
 
 const { positionals, values } = parseArgs({
@@ -55,7 +55,7 @@ try {
   switch (cmd) {
     case 'initial-key': {
       if (!existsSync(INITIAL_KEY_FILE)) {
-        if (!values.raw) console.log('The initial admin key was already retrieved or used.\nCreate a new admin key with: aichat key-add <name> --human --admin');
+        if (!values.raw) console.log('The initial admin key was already retrieved or used.\nCreate a new admin key with: aisparring key-add <name> --human --admin');
         process.exitCode = values.raw ? 1 : 0;
         break;
       }

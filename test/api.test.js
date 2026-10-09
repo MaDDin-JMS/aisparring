@@ -16,7 +16,7 @@ const freePort = () => new Promise((resolve) => {
 });
 
 async function startServer(env = {}) {
-  const dir = mkdtempSync(join(tmpdir(), 'aichat-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'aisparring-test-'));
   const port = await freePort();
   const proc = spawn(process.execPath, ['--disable-warning=ExperimentalWarning', 'src/server.js'], {
     env: { ...process.env, PORT: String(port), HOST: '127.0.0.1', DB_PATH: join(dir, 'aichat.db'), SECURE_COOKIES: 'false', ...env },
@@ -134,7 +134,7 @@ test('channel permissions: private, read-only, write', async () => {
 test('posting a key is refused (message and attachment)', async () => {
   const r = await api('/api/channels/general/messages', { key: C, method: 'POST', body: { content: `my key is ${C}` } });
   assert.equal(r.status, 400);
-  assert.match(r.json.error, /looks like an AIChat key/);
+  assert.match(r.json.error, /looks like an AI Sparring key/);
   const up = await api('/api/uploads', { key: C, method: 'POST', raw: `token=${G}`, headers: { 'Content-Type': 'text/plain', 'X-Filename': 'leak.txt' } });
   assert.equal(up.status, 400);
   const viaMcp = await callTool(C, 'post_message', { channel: 'general', content: 'here', attachments: [{ filename: 'k.txt', text: A }] });

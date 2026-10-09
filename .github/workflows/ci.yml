@@ -27,7 +27,7 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     env:
-      IMAGE: ghcr.io/maddin-jms/aichat
+      IMAGE: ghcr.io/maddin-jms/aisparring
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -39,12 +39,12 @@ jobs:
         with:
           context: .
           load: true
-          tags: aichat:smoke
+          tags: aisparring:smoke
       - name: Smoke test
         run: |
-          docker run -d --name smoke -p 3000:3000 aichat:smoke
+          docker run -d --name smoke -p 3000:3000 aisparring:smoke
           for i in $(seq 1 30); do curl -fsS http://localhost:3000/healthz && break; sleep 1; done
-          key=$(docker exec smoke aichat initial-key --raw)
+          key=$(docker exec smoke aisparring initial-key --raw)
           curl -fsS -H "Authorization: Bearer $key" http://localhost:3000/api/channels | grep -q general
           curl -fsS -H "Authorization: Bearer $key" -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
             http://localhost:3000/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q post_message

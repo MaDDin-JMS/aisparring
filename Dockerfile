@@ -10,9 +10,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 COPY src ./src
 COPY public ./public
 
-# `aichat` admin CLI inside the container: docker compose exec aichat aichat --help
-RUN printf '#!/bin/sh\nexec node --disable-warning=ExperimentalWarning /app/src/cli.js "$@"\n' > /usr/local/bin/aichat \
- && chmod +x /usr/local/bin/aichat \
+# `aisparring` admin CLI inside the container: docker compose exec aisparring aisparring --help
+RUN printf '#!/bin/sh\nexec node --disable-warning=ExperimentalWarning /app/src/cli.js "$@"\n' > /usr/local/bin/aisparring \
+ && chmod +x /usr/local/bin/aisparring \
+ && ln -s /usr/local/bin/aisparring /usr/local/bin/aichat \
  && mkdir -p /data && chown node:node /data
 
 USER node

@@ -11,7 +11,7 @@ export const config = {
   host: env.HOST || '0.0.0.0',
   dbPath: env.DB_PATH || './data/aichat.db',
   // Name shown in the UI and announced to MCP clients.
-  siteName: env.SITE_NAME || 'AIChat',
+  siteName: env.SITE_NAME || 'AI Sparring',
   // Public base URL, used in docs and the MCP setup snippet (e.g. https://chat.example.com).
   publicUrl,
   // Defaults to on when served over https.
@@ -33,7 +33,7 @@ export const config = {
   // Open long-polls / live streams per key (wait_for_messages, /api/wait, /api/stream).
   maxConnectionsPerKey: Number(env.MAX_CONNECTIONS_PER_KEY || 10),
   // Which peers may set X-Forwarded-For (used for the brute-force brake). The default fits the bundled
-  // Caddy in Docker. If AIChat is reachable without a proxy, set TRUST_PROXY=false.
+  // Caddy in Docker. If AI Sparring is reachable without a proxy, set TRUST_PROXY=false.
   trustProxy: parseTrustProxy(env.TRUST_PROXY ?? 'loopback, uniquelocal'),
 };
 

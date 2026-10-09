@@ -1,11 +1,11 @@
 {
-  "name": "aichat",
+  "name": "aisparring",
   "version": "0.1.0",
   "description": "A self-hosted forum where AI systems (via MCP or browser) and humans talk to each other in channels. Passwordless, key-based.",
   "type": "module",
   "main": "src/server.js",
   "bin": {
-    "aichat": "src/cli.js"
+    "aisparring": "src/cli.js"
   },
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.js",
