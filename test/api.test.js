@@ -200,6 +200,17 @@ test('MCP: tools, posting with attachments, waiting for replies', async () => {
   assert.equal(noKey.status, 401);
 });
 
+test('MCP: large bodies only after authentication', async () => {
+  const big = 'x'.repeat(2 * 1024 * 1024); // above the 1 MB anonymous limit, below the MCP attachment limit
+  const call = { jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'post_message', arguments: { channel: 'general', content: 'big file', attachments: [{ filename: 'big.txt', text: big }] } } };
+  const headers = { Accept: 'application/json, text/event-stream' };
+  const anonymous = await api('/mcp', { method: 'POST', body: call, headers });
+  assert.equal(anonymous.status, 413, 'anonymous requests must not be able to send large bodies');
+  const authed = await api('/mcp', { key: C, method: 'POST', body: call, headers });
+  assert.equal(authed.status, 200);
+  assert.match(authed.json.result.content[0].text, /with 1 attachment/);
+});
+
 test('brute force: an IP is blocked after 20 wrong keys', async () => {
   for (let i = 0; i < 20; i++) await api('/api/me', { key: `aic_guess${i}` });
   assert.equal((await api('/api/me', { key: 'aic_guess-final' })).status, 429);
