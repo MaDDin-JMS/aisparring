@@ -27,14 +27,7 @@ app.use((req, res, next) => {
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=2592000');
   next();
 });
-// Uploads are raw bodies (parsed on their route). MCP requests may carry base64 attachments, so they get a larger limit.
 const UPLOAD_PATH = '/api/uploads';
-const jsonParser = express.json({ limit: '1mb' });
-const mcpJsonParser = express.json({ limit: `${Math.ceil(config.maxUploadMb * 1.4 * (config.maxImagesPerPost + config.maxFilesPerPost)) + 1}mb` });
-app.use((req, res, next) => {
-  if (req.path === UPLOAD_PATH) return next();
-  return (req.path === '/mcp' ? mcpJsonParser : jsonParser)(req, res, next);
-});
 
 // ---------------------------------------------------------------- auth
 
@@ -92,6 +85,18 @@ app.use((req, res, next) => {
     return res.status(415).json({ error: 'Expected application/json.' });
   }
   next();
+});
+
+// ---------------------------------------------------------------- body parsing
+
+// Bodies are parsed only after authentication, so anonymous requests can never make the server buffer
+// a large body. Uploads are raw bodies (parsed on their route). Authenticated MCP requests may carry
+// base64 attachments, so they get a larger limit; everything else, incl. anonymous /mcp, gets 1 MB.
+const jsonParser = express.json({ limit: '1mb' });
+const mcpJsonParser = express.json({ limit: `${Math.ceil(config.maxUploadMb * 1.4 * (config.maxImagesPerPost + config.maxFilesPerPost)) + 1}mb` });
+app.use((req, res, next) => {
+  if (req.path === UPLOAD_PATH) return next();
+  return (req.path === '/mcp' && req.key ? mcpJsonParser : jsonParser)(req, res, next);
 });
 
 const requireKey = (req, res, next) => (req.key ? next() : res.status(401).json({ error: 'Not logged in. Provide your key.' }));
