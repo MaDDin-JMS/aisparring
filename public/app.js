@@ -654,7 +654,7 @@
     adminTab = tab;
     $$('.tab').forEach((t) => t.classList.toggle('active', t.dataset.tab === tab));
     $$('[data-panel]').forEach((p) => (p.hidden = p.dataset.panel !== tab));
-    return tab === 'keys' ? loadKeys() : loadAdminChannels();
+    return { keys: loadKeys, channels: loadAdminChannels, access: loadAccessMatrix }[tab]();
   }
 
   $$('.tab').forEach((t) => t.addEventListener('click', () => showTab(t.dataset.tab)));
@@ -741,9 +741,9 @@
     const [{ channels }, { keys }] = await Promise.all([api('/api/admin/channels'), api('/api/admin/keys')]);
     adminKeys = keys;
     adminChannels = channels;
-    const active = keys.filter((k) => !k.revoked && !k.is_admin);
+    const keyName = new Map(keys.map((k) => [k.id, k]));
     $('#channel-cards').innerHTML = channels.map((c) => {
-      const levels = new Map(c.access_list.map((a) => [a.key_id, a.level]));
+      const granted = c.access_list.map((a) => ({ ...a, key: keyName.get(a.key_id) })).filter((a) => a.key && !a.key.revoked && !a.key.is_admin);
       return `
       <div class="card channel-card" data-channel="${c.id}">
         <div class="channel-card-head">
@@ -757,18 +757,82 @@
         <p class="muted small">${esc(c.title)}${c.topic ? ` — ${esc(c.topic)}` : ''} · ${c.message_count} messages</p>
         <label class="switch"><input type="checkbox" data-act="open" ${c.is_open ? 'checked' : ''}><span></span> Open to everyone (every key can read &amp; write)</label>
         ${c.is_open ? '' : `
-          <div class="access-grid">
-            ${active.length ? active.map((k) => {
-              const lv = levels.get(k.id) || 'none';
-              return `<div class="access-row" data-key="${k.id}">
-                <span><span class="avatar sm${k.kind === 'ai' ? ' ai' : ''}" style="--h:${hue(k.name)}">${k.kind === 'ai' ? '◆' : esc(initials(k.name))}</span>${esc(k.name)}</span>
-                <span class="seg">${['none', 'read', 'write'].map((l) => `<button class="${lv === l ? 'on' : ''}" data-level="${l}">${{ none: 'No access', read: 'Read', write: 'Read & write' }[l]}</button>`).join('')}</span>
-              </div>`;
-            }).join('') : '<p class="muted small">No non-admin keys yet. Admins can always access every channel.</p>'}
+          <div class="granted">
+            <span class="muted small">Access:</span>
+            ${granted.length ? granted.map((a) => `<span class="grant ${a.level}">${esc(a.key.name)} · ${a.level === 'write' ? 'Write' : 'Read'}</span>`).join('') : '<span class="muted small">only admins</span>'}
+            <button class="btn ghost small-btn" data-act="permissions">Edit permissions →</button>
           </div>`}
       </div>`;
     }).join('');
   }
+
+  // ---- Permissions matrix: one row per key, one column per channel, one clear cell per pair.
+  const LEVEL_LABEL = { none: '—', read: 'Read', write: 'Write' };
+
+  async function loadAccessMatrix() {
+    const [{ channels }, { keys }] = await Promise.all([api('/api/admin/channels'), api('/api/admin/keys')]);
+    const cols = channels.filter((c) => !c.archived);
+    const rows = keys.filter((k) => !k.revoked).sort((a, b) => (a.is_admin - b.is_admin) || a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name));
+    const level = new Map();
+    for (const c of cols) for (const a of c.access_list) level.set(`${a.key_id}:${c.id}`, a.level);
+
+    if (!cols.length || !rows.length) {
+      $('#access-matrix').innerHTML = '<p class="muted small">Create keys and channels first.</p>';
+      return;
+    }
+    $('#access-matrix').innerHTML = `
+      <table class="matrix">
+        <thead><tr>
+          <th class="corner">Key \\ Channel</th>
+          ${cols.map((c, j) => `<th data-col="${j}" title="${esc(c.title)}${c.topic ? ` — ${esc(c.topic)}` : ''}">
+            <span class="col-name">${c.is_open ? '#' : '🔒'} ${esc(c.slug)}</span>
+            <span class="col-sub">${c.is_open ? 'open to all' : 'private'}</span></th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${rows.map((k) => `<tr>
+            <th class="row-head">
+              <span class="avatar sm${k.kind === 'ai' ? ' ai' : ''}" style="--h:${hue(k.name)}">${k.kind === 'ai' ? '◆' : esc(initials(k.name))}</span>
+              <span class="row-name">${esc(k.name)}</span>
+              <span class="badge${k.kind === 'ai' ? ' ai' : ''}">${k.is_admin ? 'admin' : k.kind === 'ai' ? 'AI' : 'Human'}</span>
+            </th>
+            ${cols.map((c, j) => {
+              const where = `${esc(k.name)} → #${esc(c.slug)}`;
+              if (k.is_admin) return `<td data-col="${j}" title="${where}: admins can do everything"><span class="lvl fixed">all</span></td>`;
+              if (c.is_open) return `<td data-col="${j}" title="${where}: open channel — everyone can read &amp; write"><span class="lvl fixed">all</span></td>`;
+              const lv = level.get(`${k.id}:${c.id}`) || 'none';
+              return `<td data-col="${j}" title="${where}">
+                <select class="lvl-select ${lv}" data-key="${k.id}" data-channel="${c.id}" aria-label="${where}">
+                  ${['none', 'read', 'write'].map((l) => `<option value="${l}"${l === lv ? ' selected' : ''}>${{ none: '— No access', read: 'Read', write: 'Read & write' }[l]}</option>`).join('')}
+                </select></td>`;
+            }).join('')}
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  $('#access-matrix').addEventListener('change', async (e) => {
+    const sel = e.target.closest('.lvl-select');
+    if (!sel) return;
+    const level = sel.value;
+    sel.className = `lvl-select ${level} saving`;
+    try {
+      await api(`/api/admin/channels/${sel.dataset.channel}/access/${sel.dataset.key}`, { method: 'PUT', body: { level: level === 'none' ? null : level } });
+      sel.classList.remove('saving');
+      toast(`${sel.getAttribute('aria-label')}: ${LEVEL_LABEL[level] === '—' ? 'no access' : level === 'write' ? 'read & write' : 'read only'}`);
+    } catch (err) {
+      toast(err.message, true);
+      loadAccessMatrix();
+    }
+  });
+
+  // Highlight the row and column under the pointer so it is always clear which key and channel a cell belongs to.
+  $('#access-matrix').addEventListener('mouseover', (e) => {
+    const cell = e.target.closest('td, th[data-col]');
+    $$('#access-matrix .col-hover').forEach((el) => el.classList.remove('col-hover'));
+    if (!cell?.dataset.col) return;
+    $$(`#access-matrix [data-col="${cell.dataset.col}"]`).forEach((el) => el.classList.add('col-hover'));
+  });
+  $('#access-matrix').addEventListener('mouseleave', () => $$('#access-matrix .col-hover').forEach((el) => el.classList.remove('col-hover')));
 
   $('#channel-form').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -790,17 +854,11 @@
     if (!card) return;
     const id = Number(card.dataset.channel);
     const channel = adminChannels.find((c) => c.id === id);
-    const levelBtn = e.target.closest('[data-level]');
     const act = e.target.closest('[data-act]')?.dataset.act;
     try {
-      if (levelBtn) {
-        const keyId = levelBtn.closest('[data-key]').dataset.key;
-        const level = levelBtn.dataset.level;
-        await api(`/api/admin/channels/${id}/access/${keyId}`, { method: 'PUT', body: { level: level === 'none' ? null : level } });
-        $$('button', levelBtn.parentElement).forEach((b) => b.classList.toggle('on', b === levelBtn));
-        return;
-      }
-      if (act === 'open') {
+      if (act === 'permissions') {
+        return showTab('access');
+      } else if (act === 'open') {
         await api(`/api/admin/channels/${id}`, { method: 'PATCH', body: { is_open: e.target.checked } });
       } else if (act === 'archive') {
         await api(`/api/admin/channels/${id}`, { method: 'PATCH', body: { archived: !channel.archived } });

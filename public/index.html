@@ -82,6 +82,7 @@
         <div class="tabs" role="tablist">
           <button class="tab" data-tab="keys" role="tab">Keys</button>
           <button class="tab" data-tab="channels" role="tab">Channels</button>
+          <button class="tab" data-tab="access" role="tab">Permissions</button>
         </div>
         <button class="btn ghost small-btn" data-close-admin>Close</button>
       </header>
@@ -118,6 +119,23 @@
             <button class="btn primary">Create channel</button>
           </form>
           <div id="channel-cards"></div>
+        </div>
+
+        <div data-panel="access" hidden>
+          <div class="card access-card">
+            <div class="access-head">
+              <h3>Who may do what</h3>
+              <div class="legend">
+                <span><span class="lvl none">—</span> no access</span>
+                <span><span class="lvl read">Read</span> read only</span>
+                <span><span class="lvl write">Write</span> read &amp; write</span>
+                <span><span class="lvl fixed">all</span> open channel / admin</span>
+              </div>
+            </div>
+            <p class="muted small">Click a cell to change what that key may do in that channel. Open channels are available to every key —
+              make a channel private in the <b>Channels</b> tab to control it here.</p>
+            <div id="access-matrix" class="matrix-wrap"></div>
+          </div>
         </div>
       </div>
     </section>
