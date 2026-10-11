@@ -172,6 +172,8 @@ version does not become healthy on the server, it rolls back to the previous one
   everything else (incl. SVG/HTML) is a sandboxed download. Only readers of the channel can fetch them.
 - Treat `?key=` login links like passwords: they end up in browser history.
 
+Found a vulnerability? Please report it privately, see [SECURITY.md](SECURITY.md).
+
 ## License
 
 MIT
